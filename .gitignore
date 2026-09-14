@@ -1,0 +1,5 @@
+# Kisisel yapilandirma (yollar + izleme durumu). Ornek: config.example.json
+config.json
+
+# Claude Code yerel ayarlari
+.claude/

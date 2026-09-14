@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "mpvPath": "C:\\Program Files\\MPV Player\\mpv.exe",
+  "sourceRoot": "C:\\Users\\YOU\\Videos\\anime",
+  "activeAnime": "",
+  "animeState": {},
+  "pipeName": "receptor_fryer",
+  "speed": 1.25,
+  "volume": 70,
+  "ontopWhilePlaying": true,
+  "minimizeOnPause": true
+}
