@@ -3,3 +3,7 @@ config.json
 
 # Claude Code yerel ayarlari
 .claude/
+
+# Node bagimliliklari (AnimeciX kontrol modu)
+node_modules/
+scripts/node_modules/

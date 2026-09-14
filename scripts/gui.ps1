@@ -19,7 +19,13 @@ $script:cfg     = $null
 $script:loading = $false
 $script:epMap   = @{}
 
-function Load-Cfg { $script:cfg = Get-Content $configPath -Raw | ConvertFrom-Json }
+function Load-Cfg {
+  $script:cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+  # autoDelete anahtari yoksa ekle (varsayilan acik) -> Save-Cfg'de kaybolmasin
+  if (-not $script:cfg.PSObject.Properties.Name.Contains('autoDelete')) {
+    $script:cfg | Add-Member -NotePropertyName autoDelete -NotePropertyValue $true
+  }
+}
 function Save-Cfg { $script:cfg | ConvertTo-Json -Depth 8 | Set-Content -Path $configPath -Encoding UTF8 }
 function Fryer([string]$a) { & powershell -NoProfile -ExecutionPolicy Bypass -File $fryer $a 2>$null | Out-Null }
 function NumStr($n) { ([double]$n).ToString([System.Globalization.CultureInfo]::InvariantCulture) }
@@ -86,10 +92,18 @@ $lblA.Text = "Anime sec (aktif):"; $lblA.Location = New-Object Drawing.Point(12,
 $form.Controls.Add($lblA)
 
 $cmb = New-Object Windows.Forms.ComboBox
-$cmb.DropDownStyle = 'DropDownList'; $cmb.Size = New-Object Drawing.Size(406, 26)
+$cmb.DropDownStyle = 'DropDownList'; $cmb.Size = New-Object Drawing.Size(366, 26)
 $cmb.Location = New-Object Drawing.Point(12, 102)
 $cmb.BackColor = [Drawing.Color]::FromArgb(40,40,46); $cmb.ForeColor = [Drawing.Color]::White; $cmb.FlatStyle = 'Flat'
 $form.Controls.Add($cmb)
+
+$btnRef = New-Object Windows.Forms.Button
+$btnRef.Text = [char]0x21BB   # yenile simgesi
+$btnRef.Size = New-Object Drawing.Size(36, 26); $btnRef.Location = New-Object Drawing.Point(382, 101)
+$btnRef.FlatStyle = 'Flat'; $btnRef.BackColor = [Drawing.Color]::FromArgb(55,55,62); $btnRef.ForeColor = [Drawing.Color]::White
+$btnRef.Font = New-Object Drawing.Font("Segoe UI", 11, [Drawing.FontStyle]::Bold)
+$tt = New-Object Windows.Forms.ToolTip; $tt.SetToolTip($btnRef, "Listeyi yenile (yeni indirilenleri tara)")
+$form.Controls.Add($btnRef)
 
 $lblE = New-Object Windows.Forms.Label
 $lblE.Text = "Bolumler (tikla = aktif bolum):"; $lblE.Location = New-Object Drawing.Point(12, 140); $lblE.AutoSize = $true
@@ -110,6 +124,12 @@ $cmbSpeed.Location = New-Object Drawing.Point(100, 340)
 $cmbSpeed.BackColor = [Drawing.Color]::FromArgb(40,40,46); $cmbSpeed.ForeColor = [Drawing.Color]::White; $cmbSpeed.FlatStyle = 'Flat'
 '0.75','1.0','1.25','1.5','1.75','2.0' | ForEach-Object { [void]$cmbSpeed.Items.Add($_) }
 $form.Controls.Add($cmbSpeed)
+
+$chkDel = New-Object Windows.Forms.CheckBox
+$chkDel.Text = "Izleneni sil (onceki bolum kalir)"
+$chkDel.Location = New-Object Drawing.Point(202, 344); $chkDel.AutoSize = $true
+$chkDel.ForeColor = [Drawing.Color]::FromArgb(210,210,215)
+$form.Controls.Add($chkDel)
 
 $btnPlay = New-Object Windows.Forms.Button
 $btnPlay.Text = "> Oynat"; $btnPlay.Size = New-Object Drawing.Size(198, 40); $btnPlay.Location = New-Object Drawing.Point(12, 380)
@@ -190,8 +210,23 @@ $lst.Add_SelectedIndexChanged({
   if ($script:loading) { return }
   $sel = $lst.SelectedItem; if (-not $sel) { return }
   $full = $script:epMap[$sel]; $st = Get-State
-  if ($st.current -ne $full) { $st.current = $full; $st.pos = 0; Save-Cfg }
+  if ($st.current -ne $full) {
+    $st.current = $full; $st.pos = 0; Save-Cfg
+    # mpv calisiyorsa secilen bolume hemen atla
+    if ($script:cfg.enabled -and (Get-Process mpv -ErrorAction SilentlyContinue)) {
+      Get-Process mpv -ErrorAction SilentlyContinue | Stop-Process -Force
+      Start-Sleep -Milliseconds 300
+      Fryer 'play'
+    }
+  }
   Refresh-Status
+})
+
+$btnRef.Add_Click({
+  $sel = $cmb.SelectedItem
+  Refresh-Animes
+  if ($sel -and $cmb.Items.Contains($sel)) { $script:loading=$true; $cmb.SelectedItem = $sel; $script:loading=$false }
+  Refresh-Eps; Refresh-Status
 })
 
 $btnPlay.Add_Click({
@@ -216,21 +251,39 @@ $cmbSpeed.Add_SelectedIndexChanged({
   Mpv-Send "{`"command`":[`"set_property`",`"speed`",$(NumStr $v)]}"   # calisan mpv'ye canli uygula
 })
 
+$chkDel.Add_CheckedChanged({
+  if ($script:loading) { return }
+  $script:cfg.autoDelete = $chkDel.Checked; Save-Cfg
+})
+
 $script:tick = 0
 $timer = New-Object Windows.Forms.Timer
 $timer.Interval = 2000
 $timer.Add_Tick({
-  $pause = Mpv-Get 'pause'; $tp = Mpv-Get 'time-pos'
+  $pause = Mpv-Get 'pause'; $tp = Mpv-Get 'time-pos'; $pathObj = Mpv-Get 'path'
   if ($tp -and $tp.data -ne $null) {
     $pos = [double]$tp.data; Refresh-Status $pos
     if (-not ($pause -and $pause.data -eq $true)) {
       $st = Get-State
-      if ($st) { $st.pos = [math]::Round($pos, 1); $script:tick++; if ($script:tick % 3 -eq 0) { Save-Cfg } }
+      if ($st) {
+        $st.pos = [math]::Round($pos, 1)
+        # otomatik gecis olduysa gercekte oynanan bolumu yakala
+        if ($pathObj -and $pathObj.data -and ($st.current -ne $pathObj.data)) {
+          $st.current = $pathObj.data
+          $script:loading = $true
+          $curName = [IO.Path]::GetFileNameWithoutExtension($st.current)
+          $ci = $lst.Items.IndexOf($curName); if ($ci -ge 0) { $lst.SelectedIndex = $ci }
+          $script:loading = $false
+        }
+        $script:tick++; if ($script:tick % 3 -eq 0) { Save-Cfg }
+      }
     }
   }
 })
 
 Refresh-Toggle; Refresh-Animes; Refresh-Eps; Select-Speed; Refresh-Status
+$script:loading = $true; $chkDel.Checked = [bool]$script:cfg.autoDelete; $script:loading = $false
+Save-Cfg   # autoDelete (ve eksik anahtarlar) diske yazilsin
 $timer.Start()
 [void]$form.ShowDialog()
 $timer.Stop()
