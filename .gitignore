@@ -1,8 +1,8 @@
 # Kisisel yapilandirma (yollar + izleme durumu). Ornek: config.example.json
 config.json
 
-# Claude Code yerel ayarlari
-.claude/
+# Claude Code yerel ayarlari (pinq-doq kurallari ve becerileri commit'lenir)
+.claude/settings.local.json
 
 # Node bagimliliklari (AnimeciX kontrol modu)
 node_modules/
